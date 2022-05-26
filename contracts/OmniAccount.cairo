@@ -49,29 +49,11 @@ struct Call:
     member calldata : felt*
 end
 
-# Tmp struct introduced while we wait for Cairo
-# to support passing `[Call]` to __execute__
 struct CallArray:
     member to : felt
     member selector : felt
     member data_offset : felt
     member data_len : felt
-end
-
-struct EVMCrossChainMessage:
-    member origin_chain_id : felt
-    member token : felt
-    member token_amount_low : felt
-    member token_amount_high : felt
-    member signature_r_low : felt
-    member signature_r_high : felt
-    member signature_s_low : felt
-    member signature_s_high : felt
-    member signature_v : felt
-    member to : felt
-    member selector : felt
-    member calldata_len : felt
-    member calldata : felt*
 end
 
 ####################
@@ -141,19 +123,17 @@ func lock_funds_into_vault{
     syscall_ptr : felt*, range_check_ptr, bitwise_ptr : BitwiseBuiltin*, pedersen_ptr : HashBuiltin*
 }(
     origin_chain_id : felt,
-    token_low : felt,
-    token_high : felt,
-    token_amount_low : felt,
-    token_amount_high : felt,
+    starknet_token : felt,
+    starknet_token_amount_minus_fee : felt,
+    to : felt,
+    selector : felt,
+    calldata_len : felt,
+    calldata : felt*,
     signature_r_low : felt,
     signature_r_high : felt,
     signature_s_low : felt,
     signature_s_high : felt,
     signature_v : felt,
-    to : felt,
-    selector : felt,
-    calldata_len : felt,
-    calldata : felt*,
 ) -> ():
     alloc_locals
     let (self) = get_contract_address()
@@ -162,36 +142,40 @@ func lock_funds_into_vault{
     with_attr error_message("Cannot be called via execute"):
         assert_not_zero(caller - self)
     end
-
-    let _chain_id = Uint256(low=origin_chain_id, high=0)
-    let _token = Uint256(low=token_low, high=token_high)
-    let _token_amount = Uint256(low=token_amount_low, high=token_amount_high)
-    let _signature_r = Uint256(low=signature_r_low, high=signature_r_high)
-    let _signature_s = Uint256(low=signature_s_low, high=signature_s_high)
-    let _signature_v = Uint256(low=signature_v, high=0)
+    # Convert all args into uint256
+    # knowing that all fields have been encoded like so on origin_chain
+    let (_origin_chain_id) = felt_to_uint256(origin_chain_id)
+    let (_starknet_token) = felt_to_uint256(starknet_token)
+    let (_starknet_token_amount_minus_fee) = felt_to_uint256(starknet_token_amount_minus_fee)
     let (_to) = felt_to_uint256(to)
     let (_selector) = felt_to_uint256(selector)
 
     let (calldata_uint256 : Uint256*) = alloc()
     from_felt_array_to_uint256_array(calldata_len, calldata, calldata_uint256)
 
+    let _signature_r = Uint256(low=signature_r_low, high=signature_r_high)
+    let _signature_s = Uint256(low=signature_s_low, high=signature_s_high)
+    let _signature_v = Uint256(low=signature_v, high=0)
+    # Keccak hash of calldata
     let (keccak_ptr : felt*) = alloc()
     with keccak_ptr:
         let (calldata_hash) = keccak_uint256s(calldata_len, calldata_uint256)
     end
 
     let (hash_array : Uint256*) = alloc()
-    assert [hash_array] = _chain_id
-    assert [hash_array + 1] = _token
-    assert [hash_array + 2] = _token_amount
-    assert [hash_array + 3] = _to
-    assert [hash_array + 4] = _selector
-    assert [hash_array + 5] = calldata_hash
-
+    assert [hash_array] = _origin_chain_id
+    assert [hash_array + 1 * Uint256.SIZE] = _starknet_token
+    assert [hash_array + 2 * Uint256.SIZE] = _starknet_token_amount_minus_fee
+    assert [hash_array + 3 * Uint256.SIZE] = _to
+    assert [hash_array + 4 * Uint256.SIZE] = _selector
+    assert [hash_array + 5 * Uint256.SIZE] = calldata_hash
+    # validate ECDSA signature against eth_signer
     with keccak_ptr:
-        let (hash) = keccak_uint256s(6, hash_array)
-        validate_eth_signature(hash, _signature_r, _signature_s, signature_v)
+        let (digest) = keccak_uint256s(6, hash_array)
+        validate_eth_signature(digest, _signature_r, _signature_s, signature_v)
     end
+
+    # Pull token amount from caller and lock into StarkNetOmniVault
 
     return ()
 end
