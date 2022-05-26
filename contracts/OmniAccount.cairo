@@ -2,7 +2,11 @@
 
 from starkware.cairo.common.cairo_builtins import HashBuiltin, SignatureBuiltin, BitwiseBuiltin
 from starkware.cairo.common.signature import verify_ecdsa_signature
-from starkware.cairo.common.cairo_keccak.keccak import finalize_keccak, keccak_add_uint256
+from starkware.cairo.common.cairo_keccak.keccak import (
+    finalize_keccak,
+    keccak_add_uint256,
+    keccak_uint256s,
+)
 from starkware.cairo.common.cairo_secp.signature import verify_eth_signature_uint256
 from starkware.cairo.common.uint256 import Uint256
 from starkware.cairo.common.alloc import alloc
@@ -133,7 +137,9 @@ func initialize{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_pt
 end
 
 @external
-func lock_funds_into_vault{syscall_ptr : felt*, range_check_ptr}(
+func lock_funds_into_vault{
+    syscall_ptr : felt*, range_check_ptr, bitwise_ptr : BitwiseBuiltin*, pedersen_ptr : HashBuiltin*
+}(
     origin_chain_id : felt,
     token_low : felt,
     token_high : felt,
@@ -163,11 +169,29 @@ func lock_funds_into_vault{syscall_ptr : felt*, range_check_ptr}(
     let _signature_r = Uint256(low=signature_r_low, high=signature_r_high)
     let _signature_s = Uint256(low=signature_s_low, high=signature_s_high)
     let _signature_v = Uint256(low=signature_v, high=0)
-    let _to = felt_to_uint256(to)
-    let _selector = felt_to_uint256(selector)
+    let (_to) = felt_to_uint256(to)
+    let (_selector) = felt_to_uint256(selector)
 
     let (calldata_uint256 : Uint256*) = alloc()
     from_felt_array_to_uint256_array(calldata_len, calldata, calldata_uint256)
+
+    let (keccak_ptr : felt*) = alloc()
+    with keccak_ptr:
+        let (calldata_hash) = keccak_uint256s(calldata_len, calldata_uint256)
+    end
+
+    let (hash_array : Uint256*) = alloc()
+    assert [hash_array] = _chain_id
+    assert [hash_array + 1] = _token
+    assert [hash_array + 2] = _token_amount
+    assert [hash_array + 3] = _to
+    assert [hash_array + 4] = _selector
+    assert [hash_array + 5] = calldata_hash
+
+    with keccak_ptr:
+        let (hash) = keccak_uint256s(6, hash_array)
+        validate_eth_signature(hash, _signature_r, _signature_s, signature_v)
+    end
 
     return ()
 end
