@@ -20,6 +20,8 @@ from starkware.starknet.common.syscalls import (
     get_block_timestamp,
 )
 from contracts.utils.uint256_utils import felt_to_uint256
+from contracts.interfaces.IERC20 import IERC20
+from contracts.interfaces.IStarkNetOmniVault import IStarkNetOmniVault
 
 @contract_interface
 namespace IAccount:
@@ -92,29 +94,37 @@ end
 func _stark_signer() -> (res : felt):
 end
 
+@storage_var
+func _starknet_omni_vault() -> (res : felt):
+end
+
 ####################
 # EXTERNAL FUNCTIONS
 ####################
 
 @external
 func initialize{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr}(
-    eth_signer : felt, stark_signer
+    eth_signer : felt, stark_signer : felt, starknet_omni_vault : felt
 ):
     # check that we are not already initialized
     let (current_eth_signer) = _eth_signer.read()
     let (current_stark_signer) = _stark_signer.read()
+    let (current_starknet_omni_vault) = _starknet_omni_vault.read()
     with_attr error_message("already initialized"):
         assert current_eth_signer = 0
         assert current_stark_signer = 0
+        assert current_starknet_omni_vault = 0
     end
     # check that the target signer is not zero
     with_attr error_message("signer cannot be null"):
         assert_not_zero(eth_signer)
         assert_not_zero(stark_signer)
+        assert_not_zero(starknet_omni_vault)
     end
     # initialize the contract
     _eth_signer.write(eth_signer)
     _stark_signer.write(stark_signer)
+    _starknet_omni_vault.write(starknet_omni_vault)
     return ()
 end
 
@@ -142,8 +152,8 @@ func lock_funds_into_vault{
     with_attr error_message("Cannot be called via execute"):
         assert_not_zero(caller - self)
     end
-    # Convert all args into uint256
-    # knowing that all fields have been encoded like so on origin_chain
+    # Convert all args into uint256,
+    # knowing that all fields have been encoded and hashed like so on origin_chain
     let (_origin_chain_id) = felt_to_uint256(origin_chain_id)
     let (_starknet_token) = felt_to_uint256(starknet_token)
     let (_starknet_token_amount_minus_fee) = felt_to_uint256(starknet_token_amount_minus_fee)
@@ -155,7 +165,7 @@ func lock_funds_into_vault{
 
     let _signature_r = Uint256(low=signature_r_low, high=signature_r_high)
     let _signature_s = Uint256(low=signature_s_low, high=signature_s_high)
-    let _signature_v = Uint256(low=signature_v, high=0)
+    let _signature_v = felt_to_uint256(signature_v)
     # Keccak hash of calldata
     let (keccak_ptr : felt*) = alloc()
     with keccak_ptr:
@@ -176,7 +186,24 @@ func lock_funds_into_vault{
     end
 
     # Pull token amount from caller and lock into StarkNetOmniVault
-
+    IERC20.transferFrom(
+        contract_address=starknet_token,
+        sender=caller,
+        recipient=self,
+        amount=_starknet_token_amount_minus_fee,
+    )
+    let (starknet_omni_vault) = _starknet_omni_vault.read()
+    IERC20.approve(
+        contract_address=starknet_token,
+        spender=starknet_omni_vault,
+        amount=_starknet_token_amount_minus_fee,
+    )
+    IStarkNetOmniVault.lock_funds_for_key(
+        contract_address=starknet_omni_vault,
+        key=digest,
+        token=starknet_token,
+        amount=_starknet_token_amount_minus_fee,
+    )
     return ()
 end
 
