@@ -78,9 +78,17 @@ end
 func transaction_executed(hash : felt, response_len : felt, response : felt*):
 end
 
+@event
+func omni_vault_deposit(key : Uint256):
+end
+
 ####################
 # STORAGE VARIABLES
 ####################
+
+@storage_var
+func _lock() -> (res : felt):
+end
 
 @storage_var
 func _current_nonce() -> (res : felt):
@@ -96,6 +104,10 @@ end
 
 @storage_var
 func _starknet_omni_vault() -> (res : felt):
+end
+
+@storage_var
+func _omni_vault_deposit(key : Uint256) -> (res : felt):
 end
 
 ####################
@@ -146,6 +158,15 @@ func lock_funds_into_vault{
     signature_v : felt,
 ) -> ():
     alloc_locals
+    # Reentrancy guard
+    let (lock) = _lock.read()
+
+    with_attr error_message("Reentrancy lock"):
+        assert lock = FALSE
+    end
+
+    _lock.write(value=TRUE)
+    # Enforce external call
     let (self) = get_contract_address()
     let (caller) = get_caller_address()
 
@@ -179,12 +200,26 @@ func lock_funds_into_vault{
     assert [hash_array + 3 * Uint256.SIZE] = _to
     assert [hash_array + 4 * Uint256.SIZE] = _selector
     assert [hash_array + 5 * Uint256.SIZE] = calldata_hash
-    # validate ECDSA signature against eth_signer
+    # Keccak digest + validate ECDSA signature against eth_signer
     with keccak_ptr:
         let (digest) = keccak_uint256s(6, hash_array)
         validate_eth_signature(digest, _signature_r, _signature_s, signature_v)
     end
+    # Register Keccak digest as vault deposit key
+    let (_is_key_deposited) = _omni_vault_deposit.read(key=digest)
 
+    with_attr error_message("Key already deposited in vault"):
+        assert _is_key_deposited = FALSE
+    end
+
+    _omni_vault_deposit.write(key=digest, value=TRUE)
+    # Execute external call
+    let res = call_contract(
+        contract_address=to,
+        function_selector=selector,
+        calldata_size=calldata_len,
+        calldata=calldata,
+    )
     # Pull token amount from caller and lock into StarkNetOmniVault
     IERC20.transferFrom(
         contract_address=starknet_token,
@@ -198,12 +233,20 @@ func lock_funds_into_vault{
         spender=starknet_omni_vault,
         amount=_starknet_token_amount_minus_fee,
     )
-    IStarkNetOmniVault.lock_funds_for_key(
+    let (omni_vault_response) = IStarkNetOmniVault.lock_funds_for_key(
         contract_address=starknet_omni_vault,
         key=digest,
         token=starknet_token,
         amount=_starknet_token_amount_minus_fee,
     )
+    with_attr error_message("StarkNetOmniVault deposit failed"):
+        assert omni_vault_response = TRUE
+    end
+    # Emit key so that account owner can unlock funds from vault
+    omni_vault_deposit.emit(key=digest)
+    # Unlock Reentrancy guard
+    _lock.write(value=FALSE)
+
     return ()
 end
 
