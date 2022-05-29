@@ -64,7 +64,7 @@ func lock_funds_for_key{
     fallback_recipient : felt,
     eth_signature_r : Uint256,
     eth_signature_s : Uint256,
-    eth_signature_v : felt,
+    eth_signature_v : Uint256,
 ):
     alloc_locals
     # Reentrancy guard
@@ -135,7 +135,7 @@ end
 @external
 func unlock_funds_for_key{
     syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, bitwise_ptr : BitwiseBuiltin*, range_check_ptr
-}(key : Uint256, eth_signature_r : Uint256, eth_signature_s : Uint256, eth_signature_v : felt):
+}(key : Uint256, eth_signature_r : Uint256, eth_signature_s : Uint256, eth_signature_v : Uint256):
     alloc_locals
     # Reentrancy guard
     let (lock) = _lock.read()
@@ -194,8 +194,10 @@ func unlock_funds_for_key{
         tempvar syscall_ptr = syscall_ptr
         tempvar range_check_ptr = range_check_ptr
     else:
-        # After timelock expires, we send funds to the fallback recipient,
-        # since fallback_recipient did not claim funds on time
+        # After timelock expires we send funds to the fallback_recipient,
+        # since default_recipient did not claim funds on time
+        # Conversely, it should now be possible for default_recipient to withdraw
+        # his/her funds on origin chain.
         IERC20.transfer(
             contract_address=vault_deposit.token,
             recipient=vault_deposit.fallback_recipient,
@@ -205,7 +207,6 @@ func unlock_funds_for_key{
         tempvar syscall_ptr = syscall_ptr
         tempvar range_check_ptr = range_check_ptr
     end
-
     # Clear vault deposit
     let empty_vault_value = VaultDeposit(
         deposited=TRUE,
@@ -218,7 +219,6 @@ func unlock_funds_for_key{
         timelock=0,
     )
     _omni_vault_deposit.write(key=key, value=empty_vault_value)
-
     # Unlock Reentrancy guard
     _lock.write(value=FALSE)
 

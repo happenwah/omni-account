@@ -78,10 +78,6 @@ end
 func transaction_executed(hash : felt, response_len : felt, response : felt*):
 end
 
-@event
-func omni_vault_deposit(key : Uint256):
-end
-
 ####################
 # STORAGE VARIABLES
 ####################
@@ -104,10 +100,6 @@ end
 
 @storage_var
 func _starknet_omni_vault() -> (res : felt):
-end
-
-@storage_var
-func _omni_vault_deposit(key : Uint256) -> (res : felt):
 end
 
 ####################
@@ -187,7 +179,7 @@ func lock_funds_into_vault{
 
     let _signature_r = Uint256(low=signature_r_low, high=signature_r_high)
     let _signature_s = Uint256(low=signature_s_low, high=signature_s_high)
-    let _signature_v = felt_to_uint256(signature_v)
+    let (_signature_v) = felt_to_uint256(signature_v)
     # Keccak hash of calldata
     let (keccak_ptr : felt*) = alloc()
     with keccak_ptr:
@@ -205,22 +197,16 @@ func lock_funds_into_vault{
     with keccak_ptr:
         let (digest) = keccak_uint256s(6 * Uint256.SIZE, hash_array)
     end
-    # Register Keccak digest as vault deposit key
-    let (_is_key_deposited) = _omni_vault_deposit.read(key=digest)
 
-    with_attr error_message("Key already deposited in vault"):
-        assert _is_key_deposited = FALSE
-    end
-
-    _omni_vault_deposit.write(key=digest, value=TRUE)
-    # Execute external call
+    # Optimistically execute external call,
+    # knowing that StarkNetOmniVault will verify eth signature
     let res = call_contract(
         contract_address=to,
         function_selector=selector,
         calldata_size=calldata_len,
         calldata=calldata,
     )
-    # Pull token amount from caller and lock into StarkNetOmniVault
+    # Pull token amount from caller + approve StarkNetOmniVault
     IERC20.transferFrom(
         contract_address=starknet_token,
         sender=caller,
@@ -233,6 +219,7 @@ func lock_funds_into_vault{
         spender=starknet_omni_vault,
         amount=_starknet_token_amount_minus_fee,
     )
+    # Verify eth signature + lock funds so that eth_signer can withdraw later on
     let (eth_signer) = _eth_signer.read()
     IStarkNetOmniVault.lock_funds_for_key(
         contract_address=starknet_omni_vault,
