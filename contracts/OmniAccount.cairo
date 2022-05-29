@@ -156,6 +156,7 @@ func lock_funds_into_vault{
     signature_s_low : felt,
     signature_s_high : felt,
     signature_v : felt,
+    fallback_recipient : felt,
 ) -> ():
     alloc_locals
     # Reentrancy guard
@@ -200,10 +201,9 @@ func lock_funds_into_vault{
     assert [hash_array + 3 * Uint256.SIZE] = _to
     assert [hash_array + 4 * Uint256.SIZE] = _selector
     assert [hash_array + 5 * Uint256.SIZE] = calldata_hash
-    # Keccak digest + validate ECDSA signature against eth_signer
+    # Keccak digest
     with keccak_ptr:
-        let (digest) = keccak_uint256s(6, hash_array)
-        validate_eth_signature(digest, _signature_r, _signature_s, signature_v)
+        let (digest) = keccak_uint256s(6 * Uint256.SIZE, hash_array)
     end
     # Register Keccak digest as vault deposit key
     let (_is_key_deposited) = _omni_vault_deposit.read(key=digest)
@@ -233,17 +233,18 @@ func lock_funds_into_vault{
         spender=starknet_omni_vault,
         amount=_starknet_token_amount_minus_fee,
     )
-    let (omni_vault_response) = IStarkNetOmniVault.lock_funds_for_key(
+    let (eth_signer) = _eth_signer.read()
+    IStarkNetOmniVault.lock_funds_for_key(
         contract_address=starknet_omni_vault,
         key=digest,
         token=starknet_token,
         amount=_starknet_token_amount_minus_fee,
+        default_eth_signer=eth_signer,
+        fallback_recipient=fallback_recipient,
+        eth_signature_r=_signature_r,
+        eth_signature_s=_signature_s,
+        eth_signature_v=_signature_v,
     )
-    with_attr error_message("StarkNetOmniVault deposit failed"):
-        assert omni_vault_response = TRUE
-    end
-    # Emit key so that account owner can unlock funds from vault
-    omni_vault_deposit.emit(key=digest)
     # Unlock Reentrancy guard
     _lock.write(value=FALSE)
 
