@@ -55,10 +55,6 @@ func stark_signer_changed(new_stark_signer : felt):
 end
 
 @event
-func account_upgraded(new_implementation : felt):
-end
-
-@event
 func transaction_executed(hash : felt, response_len : felt, response : felt*):
 end
 
