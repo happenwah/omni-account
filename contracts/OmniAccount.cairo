@@ -17,9 +17,10 @@ from starkware.starknet.common.syscalls import (
     get_block_timestamp,
 )
 
-from contracts.utils.uint256_utils import felt_to_uint256
-from contracts.interfaces.IERC20 import IERC20
+from contracts.utils.vendor.uint256_utils import felt_to_uint256
+from contracts.interfaces.vendor.IERC20 import IERC20
 from contracts.interfaces.IStarkNetOmniVault import IStarkNetOmniVault
+from contracts.interfaces.IOmniAccount import CallArray
 
 ####################
 # CONSTANTS
@@ -39,13 +40,6 @@ struct Call:
     member selector : felt
     member calldata_len : felt
     member calldata : felt*
-end
-
-struct CallArray:
-    member to : felt
-    member selector : felt
-    member data_offset : felt
-    member data_len : felt
 end
 
 ####################
@@ -314,7 +308,7 @@ func __execute__{
     transaction_executed.emit(
         hash=tx_info.transaction_hash, response_len=response_len, response=response
     )
-
+    # Note: @raw_output requires (retdata_size, retdata) instead of (retdata_len, retdata)
     return (retdata_size=response_len, retdata=response)
 end
 

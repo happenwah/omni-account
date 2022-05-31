@@ -12,8 +12,8 @@ from starkware.starknet.common.syscalls import (
 )
 from starkware.cairo.common.cairo_secp.signature import verify_eth_signature_uint256
 
-from contracts.utils.uint256_utils import felt_to_uint256
-from contracts.interfaces.IERC20 import IERC20
+from contracts.utils.vendor.uint256_utils import felt_to_uint256
+from contracts.interfaces.vendor.IERC20 import IERC20
 
 ####################
 # CONSTANTS
