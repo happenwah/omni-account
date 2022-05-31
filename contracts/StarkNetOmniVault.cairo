@@ -11,15 +11,29 @@ from starkware.starknet.common.syscalls import (
     get_block_timestamp,
 )
 from starkware.cairo.common.cairo_secp.signature import verify_eth_signature_uint256
+
 from contracts.utils.uint256_utils import felt_to_uint256
 from contracts.interfaces.IERC20 import IERC20
+
+####################
+# CONSTANTS
+####################
+
 # Keccak("StarkNet Ecosystem")
 const STARKNET_ECOSYSTEM_HASH = 309689450920295678721545444397245125347984070251552327295375900229755709900
+
 const ONE_WEEK = 7 * 86400
+
+const FALSE = 0
+const TRUE = 1
+
+####################
+# STRUCTS
+####################
 
 struct VaultDeposit:
     member deposited : felt
-    member withdrawed : felt
+    member withdrawn : felt
     member token : felt
     member default_recipient : felt
     member default_eth_signer : felt
@@ -28,6 +42,10 @@ struct VaultDeposit:
     member timelock : felt
 end
 
+####################
+# STORAGE VARIABLES
+####################
+
 @storage_var
 func _lock() -> (res : felt):
 end
@@ -35,6 +53,10 @@ end
 @storage_var
 func _omni_vault_deposit(key : Uint256) -> (res : VaultDeposit):
 end
+
+####################
+# EVENTS
+####################
 
 @event
 func omni_vault_deposit(key : Uint256):
@@ -50,8 +72,9 @@ func omni_vault_withdrawal(
 ):
 end
 
-const FALSE = 0
-const TRUE = 1
+####################
+# EXTERNAL METHODS
+####################
 
 @external
 func lock_funds_for_key{
@@ -64,7 +87,7 @@ func lock_funds_for_key{
     fallback_recipient : felt,
     eth_signature_r : Uint256,
     eth_signature_s : Uint256,
-    eth_signature_v : Uint256,
+    eth_signature_v : felt,
 ):
     alloc_locals
     # Reentrancy guard
@@ -79,8 +102,8 @@ func lock_funds_for_key{
         vault_deposit.deposited = FALSE
     end
 
-    with_attr error_message("Vault key already withdrawed"):
-        vault_deposit.withdrawed = FALSE
+    with_attr error_message("Vault key already withdrawn"):
+        vault_deposit.withdrawn = FALSE
     end
 
     let (self) = get_contract_address()
@@ -109,11 +132,11 @@ func lock_funds_for_key{
         let (is_sufficient_deposit_amount) = uint256_le(amount, deposit_amount)
         assert is_sufficient_deposit_amount = TRUE
     end
-
+    # Register deposit
     let (block_timestamp) = get_block_timestamp()
     let _vault_deposit_value = VaultDeposit(
         deposited=TRUE,
-        withdrawed=FALSE,
+        withdrawn=FALSE,
         token=token,
         default_recipient=caller,
         default_eth_signer=default_eth_signer,
@@ -121,7 +144,6 @@ func lock_funds_for_key{
         amount=deposit_amount,
         timelock=block_timestamp + ONE_WEEK,
     )
-
     _omni_vault_deposit.write(key=key, value=_vault_deposit_value)
 
     omni_vault_deposit.emit(key=key)
@@ -135,7 +157,7 @@ end
 @external
 func unlock_funds_for_key{
     syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, bitwise_ptr : BitwiseBuiltin*, range_check_ptr
-}(key : Uint256, eth_signature_r : Uint256, eth_signature_s : Uint256, eth_signature_v : Uint256):
+}(key : Uint256, eth_signature_r : Uint256, eth_signature_s : Uint256, eth_signature_v : felt):
     alloc_locals
     # Reentrancy guard
     let (lock) = _lock.read()
@@ -149,8 +171,8 @@ func unlock_funds_for_key{
         vault_deposit.deposited = TRUE
     end
 
-    with_attr error_message("Vault key already withdrawed"):
-        vault_deposit.withdrawed = FALSE
+    with_attr error_message("Vault key already withdrawn"):
+        vault_deposit.withdrawn = FALSE
     end
 
     let (block_timestamp) = get_block_timestamp()
@@ -194,9 +216,9 @@ func unlock_funds_for_key{
         tempvar syscall_ptr = syscall_ptr
         tempvar range_check_ptr = range_check_ptr
     else:
-        # After timelock expires we send funds to the fallback_recipient,
-        # since default_recipient did not claim funds on time
-        # Conversely, it should now be possible for default_recipient to withdraw
+        # After timelock expires we send funds to fallback_recipient,
+        # since default_recipient did not claim funds on time.
+        # It should now be possible for default_recipient to withdraw
         # his/her funds on origin chain.
         IERC20.transfer(
             contract_address=vault_deposit.token,
@@ -210,7 +232,7 @@ func unlock_funds_for_key{
     # Clear vault deposit
     let empty_vault_value = VaultDeposit(
         deposited=TRUE,
-        withdrawed=TRUE,
+        withdrawn=TRUE,
         token=0,
         default_recipient=0,
         default_eth_signer=0,

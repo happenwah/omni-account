@@ -12,15 +12,12 @@ namespace IStarkNetOmniVault:
         fallback_recipient : felt,
         eth_signature_r : Uint256,
         eth_signature_s : Uint256,
-        eth_signature_v : Uint256,
+        eth_signature_v : felt,
     ):
     end
 
     func unlock_funds_for_key(
-        key : Uint256,
-        eth_signature_r : Uint256,
-        eth_signature_s : Uint256,
-        eth_signature_v : Uint256,
+        key : Uint256, eth_signature_r : Uint256, eth_signature_s : Uint256, eth_signature_v : felt
     ):
     end
 end

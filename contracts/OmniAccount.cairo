@@ -2,16 +2,13 @@
 
 from starkware.cairo.common.cairo_builtins import HashBuiltin, SignatureBuiltin, BitwiseBuiltin
 from starkware.cairo.common.signature import verify_ecdsa_signature
-from starkware.cairo.common.cairo_keccak.keccak import (
-    finalize_keccak,
-    keccak_add_uint256,
-    keccak_uint256s,
-)
+from starkware.cairo.common.cairo_keccak.keccak import keccak_uint256s
 from starkware.cairo.common.cairo_secp.signature import verify_eth_signature_uint256
 from starkware.cairo.common.uint256 import Uint256
 from starkware.cairo.common.alloc import alloc
 from starkware.cairo.common.memcpy import memcpy
-from starkware.cairo.common.math import assert_not_zero, assert_le, assert_nn
+from starkware.cairo.common.math import assert_not_zero
+from starkware.cairo.common.math_cmp import is_nn
 from starkware.starknet.common.syscalls import (
     call_contract,
     get_tx_info,
@@ -19,23 +16,16 @@ from starkware.starknet.common.syscalls import (
     get_caller_address,
     get_block_timestamp,
 )
+
 from contracts.utils.uint256_utils import felt_to_uint256
 from contracts.interfaces.IERC20 import IERC20
 from contracts.interfaces.IStarkNetOmniVault import IStarkNetOmniVault
-
-@contract_interface
-namespace IAccount:
-    func supportsInterface(interfaceId : felt) -> (success : felt):
-    end
-end
 
 ####################
 # CONSTANTS
 ####################
 
 const VERSION = '0.1.0'
-
-const ERC165_ACCOUNT_INTERFACE = 0xf10dbd44
 
 const TRUE = 1
 const FALSE = 0
@@ -110,30 +100,45 @@ end
 func initialize{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr}(
     eth_signer : felt, stark_signer : felt, starknet_omni_vault : felt
 ):
-    # check that we are not already initialized
+    # Check that we are not already initialized
     let (current_eth_signer) = _eth_signer.read()
     let (current_stark_signer) = _stark_signer.read()
     let (current_starknet_omni_vault) = _starknet_omni_vault.read()
-    with_attr error_message("already initialized"):
+    with_attr error_message("Already initialized"):
         assert current_eth_signer = 0
         assert current_stark_signer = 0
         assert current_starknet_omni_vault = 0
     end
-    # check that the target signer is not zero
-    with_attr error_message("signer cannot be null"):
+    # Prevent null value
+    with_attr error_message("Cannot be null"):
         assert_not_zero(eth_signer)
         assert_not_zero(stark_signer)
         assert_not_zero(starknet_omni_vault)
     end
-    # initialize the contract
+    # Initialize the contract
     _eth_signer.write(eth_signer)
     _stark_signer.write(stark_signer)
     _starknet_omni_vault.write(starknet_omni_vault)
     return ()
 end
 
+# @notice Allows third-party (caller) to securely lock funds into StarkNetOmniVault for this account's owner.
+#         Assumes that caller has approved this account to transfer funds into StarkNetOmniVault.
+# @param origin_chain_id Origin chain id for account's owner.
+# @param starknet_token Address of StarkNet ERC20 token to be locked.
+# @param starknet_token_amount_minus_fee Amount that caller should lock into StarkNetOmniVault.
+#         Assumes that account's owner locked starknet_token_amount on origin chain.
+# @param to Address to execute external call. Can be 0 if not required.
+# @param selector Function selector to be called on to.
+# @param calldata Payload for to.
+# @param eth_signature_r_low Low bits of secp256k1 R coordinate.
+# @param eth_signature_r_high High bits of secp256k1 R coordinate.
+# @param eth_signature_s_low Low bits of secp256k1 S coordinate.
+# @param eth_signature_s_high High bits of secp256k1 S coordinate.
+# @param eth_signature_v secp256k1 V coordinate.
+# @param fallback_recipient Allows caller to specify an address that can claim funds after the timelock period.
 @external
-func lock_funds_into_vault{
+func deposit_funds_into_vault{
     syscall_ptr : felt*, range_check_ptr, bitwise_ptr : BitwiseBuiltin*, pedersen_ptr : HashBuiltin*
 }(
     origin_chain_id : felt,
@@ -143,11 +148,11 @@ func lock_funds_into_vault{
     selector : felt,
     calldata_len : felt,
     calldata : felt*,
-    signature_r_low : felt,
-    signature_r_high : felt,
-    signature_s_low : felt,
-    signature_s_high : felt,
-    signature_v : felt,
+    eth_signature_r_low : felt,
+    eth_signature_r_high : felt,
+    eth_signature_s_low : felt,
+    eth_signature_s_high : felt,
+    eth_signature_v : felt,
     fallback_recipient : felt,
 ) -> ():
     alloc_locals
@@ -177,10 +182,9 @@ func lock_funds_into_vault{
     let (calldata_uint256 : Uint256*) = alloc()
     from_felt_array_to_uint256_array(calldata_len, calldata, calldata_uint256)
 
-    let _signature_r = Uint256(low=signature_r_low, high=signature_r_high)
-    let _signature_s = Uint256(low=signature_s_low, high=signature_s_high)
-    let (_signature_v) = felt_to_uint256(signature_v)
-    # Keccak hash of calldata
+    let _eth_signature_r = Uint256(low=eth_signature_r_low, high=eth_signature_r_high)
+    let _eth_signature_s = Uint256(low=eth_signature_s_low, high=eth_signature_s_high)
+    # Keccak(calldata)
     let (keccak_ptr : felt*) = alloc()
     with keccak_ptr:
         let (calldata_hash) = keccak_uint256s(calldata_len, calldata_uint256)
@@ -193,26 +197,32 @@ func lock_funds_into_vault{
     assert [hash_array + 3 * Uint256.SIZE] = _to
     assert [hash_array + 4 * Uint256.SIZE] = _selector
     assert [hash_array + 5 * Uint256.SIZE] = calldata_hash
-    # Keccak digest
+    # Compute digest
     with keccak_ptr:
         let (digest) = keccak_uint256s(6 * Uint256.SIZE, hash_array)
     end
-
-    # Optimistically execute external call,
-    # knowing that StarkNetOmniVault will verify eth signature
-    let res = call_contract(
-        contract_address=to,
-        function_selector=selector,
-        calldata_size=calldata_len,
-        calldata=calldata,
-    )
-    # Pull token amount from caller + approve StarkNetOmniVault
+    let (exec_call) = is_nn(to)
+    if exec_call == TRUE:
+        # Optimistically execute external call,
+        # knowing that StarkNetOmniVault will verify eth signature
+        call_contract(
+            contract_address=to,
+            function_selector=selector,
+            calldata_size=calldata_len,
+            calldata=calldata,
+        )
+        tempvar syscall_ptr = syscall_ptr
+    else:
+        tempvar syscall_ptr = syscall_ptr
+    end
+    # Pull token amount from caller
     IERC20.transferFrom(
         contract_address=starknet_token,
         sender=caller,
         recipient=self,
         amount=_starknet_token_amount_minus_fee,
     )
+    # Approve StarkNetOmniVault
     let (starknet_omni_vault) = _starknet_omni_vault.read()
     IERC20.approve(
         contract_address=starknet_token,
@@ -228,12 +238,30 @@ func lock_funds_into_vault{
         amount=_starknet_token_amount_minus_fee,
         default_eth_signer=eth_signer,
         fallback_recipient=fallback_recipient,
-        eth_signature_r=_signature_r,
-        eth_signature_s=_signature_s,
-        eth_signature_v=_signature_v,
+        eth_signature_r=_eth_signature_r,
+        eth_signature_s=_eth_signature_s,
+        eth_signature_v=eth_signature_v,
     )
     # Unlock Reentrancy guard
     _lock.write(value=FALSE)
+
+    return ()
+end
+
+# @notice Allows anyone with the correct signature to claim StarkNetOmniVault funds to this account,
+#          while timelock is still active.
+# @param key Hash that represents deposit to be claimed
+# @param eth_signature_r secp256k1 R coordinate.
+# @param eth_signature_s secp256k1 S coordinate.
+# @param eth_signature_v secp256k1 V coordinate.
+@external
+func claim_funds_from_vault{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr}(
+    key : Uint256, eth_signature_r : Uint256, eth_signature_s : Uint256, eth_signature_v : felt
+):
+    let (starknet_omni_vault) = _starknet_omni_vault.read()
+    IStarkNetOmniVault.unlock_funds_for_key(
+        starknet_omni_vault, key, eth_signature_r, eth_signature_s, eth_signature_v
+    )
 
     return ()
 end
@@ -280,11 +308,11 @@ end
 func change_eth_signer{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr}(
     new_eth_signer : felt
 ):
-    # only called via execute
+    # Only called via execute
     assert_only_self()
 
-    # change signer
-    with_attr error_message("eth signer cannot be null"):
+    # Change eth signer
+    with_attr error_message("Eth signer cannot be null"):
         assert_not_zero(new_eth_signer)
     end
     _eth_signer.write(new_eth_signer)
@@ -296,11 +324,11 @@ end
 func change_stark_signer{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr}(
     new_stark_signer : felt
 ):
-    # only called via execute
+    # Only called via execute
     assert_only_self()
 
-    # change signer
-    with_attr error_message("stark signer cannot be null"):
+    # Change signer
+    with_attr error_message("Stark signer cannot be null"):
         assert_not_zero(new_stark_signer)
     end
     _stark_signer.write(new_stark_signer)
@@ -340,21 +368,6 @@ func is_valid_stark_signature{
 }(hash : felt, sig_len : felt, sig : felt*) -> ():
     validate_stark_signature(hash, sig_len, sig)
     return ()
-end
-
-@view
-func supportsInterface{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr}(
-    interfaceId : felt
-) -> (success : felt):
-    # 165
-    if interfaceId == 0x01ffc9a7:
-        return (TRUE)
-    end
-    # IAccount
-    if interfaceId == ERC165_ACCOUNT_INTERFACE:
-        return (TRUE)
-    end
-    return (FALSE)
 end
 
 @view
@@ -412,7 +425,7 @@ func validate_and_bump_nonce{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, r
     message_nonce : felt
 ) -> ():
     let (current_nonce) = _current_nonce.read()
-    with_attr error_message("nonce invalid"):
+    with_attr error_message("Invalid nonce"):
         assert current_nonce = message_nonce
     end
     _current_nonce.write(current_nonce + 1)
@@ -427,7 +440,7 @@ func validate_eth_signature{
     keccak_ptr : felt*,
 }(hash : Uint256, signature_r : Uint256, signature_s : Uint256, signature_v : felt) -> ():
     alloc_locals
-    with_attr error_message("eth signature invalid"):
+    with_attr error_message("Eth signature invalid"):
         let (eth_signer) = _eth_signer.read()
         verify_eth_signature_uint256(
             msg_hash=hash, r=signature_r, s=signature_s, v=signature_v, eth_address=eth_signer
@@ -439,7 +452,7 @@ end
 func validate_stark_signature{
     syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr, ecdsa_ptr : SignatureBuiltin*
 }(hash : felt, signature_len : felt, signature : felt*) -> ():
-    with_attr error_message("stark signature invalid"):
+    with_attr error_message("Stark signature invalid"):
         let (stark_signer) = _stark_signer.read()
         verify_ecdsa_signature(
             message=hash,
