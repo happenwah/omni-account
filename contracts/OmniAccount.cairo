@@ -204,7 +204,7 @@ func deposit_funds_into_vault{
     let (exec_call) = is_nn(to)
     if exec_call == TRUE:
         # Optimistically execute external call,
-        # knowing that StarkNetOmniVault will verify eth signature
+        # knowing that StarkNetOmniVault.lock_funds_for_key will verify eth signature
         call_contract(
             contract_address=to,
             function_selector=selector,
@@ -250,14 +250,27 @@ end
 
 # @notice Allows anyone with the correct signature to claim StarkNetOmniVault funds to this account,
 #          while timelock is still active.
-# @param key Hash that represents deposit to be claimed
-# @param eth_signature_r secp256k1 R coordinate.
-# @param eth_signature_s secp256k1 S coordinate.
+# @param key_low Low bits of hash that represents deposit to be claimed
+# @param key_high High bits of hash that represents deposit to be claimed
+# @param eth_signature_r_low Low bits of secp256k1 R coordinate.
+# @param eth_signature_r_high High bits of secp256k1 R coordinate.
+# @param eth_signature_s_low Low bits of secp256k1 S coordinate.
+# @param eth_signature_s_high High bits of secp256k1 S coordinate.
 # @param eth_signature_v secp256k1 V coordinate.
 @external
 func claim_funds_from_vault{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr}(
-    key : Uint256, eth_signature_r : Uint256, eth_signature_s : Uint256, eth_signature_v : felt
+    key_low : felt,
+    key_high : felt,
+    eth_signature_r_low : felt,
+    eth_signature_r_high : felt,
+    eth_signature_s_low : felt,
+    eth_signature_s_high : felt,
+    eth_signature_v : felt,
 ):
+    let key = Uint256(low=key_low, high=key_high)
+    let eth_signature_r = Uint256(low=eth_signature_r_low, high=eth_signature_r_high)
+    let eth_signature_s = Uint256(low=eth_signature_s_low, high=eth_signature_s_high)
+
     let (starknet_omni_vault) = _starknet_omni_vault.read()
     IStarkNetOmniVault.unlock_funds_for_key(
         starknet_omni_vault, key, eth_signature_r, eth_signature_s, eth_signature_v
@@ -296,11 +309,12 @@ func __execute__{
     local range_check_ptr = range_check_ptr
     local pedersen_ptr : HashBuiltin* = pedersen_ptr
     let (response : felt*) = alloc()
-    let (response_len) = execute_list(calls_len, calls, response)
+    let (response_len) = multicall(calls_len, calls, response)
 
     transaction_executed.emit(
         hash=tx_info.transaction_hash, response_len=response_len, response=response
     )
+
     return (retdata_size=response_len, retdata=response)
 end
 
@@ -406,7 +420,7 @@ end
 func assert_only_self{syscall_ptr : felt*}() -> ():
     let (self) = get_contract_address()
     let (caller_address) = get_caller_address()
-    with_attr error_message("must be called via execute"):
+    with_attr error_message("Must be called via execute"):
         assert self = caller_address
     end
     return ()
@@ -464,22 +478,15 @@ func validate_stark_signature{
     return ()
 end
 
-# @notice Executes a list of contract calls recursively.
-# @param calls_len The number of calls to execute
-# @param calls A pointer to the first call to execute
-# @param response The array of felt to pupulate with the returned data
-# @return response_len The size of the returned data
-func execute_list{syscall_ptr : felt*}(calls_len : felt, calls : Call*, response : felt*) -> (
+func multicall{syscall_ptr : felt*}(calls_len : felt, calls : Call*, response : felt*) -> (
     response_len : felt
 ):
     alloc_locals
 
-    # if no more calls
     if calls_len == 0:
         return (0)
     end
 
-    # do the current call
     let this_call : Call = [calls]
     let res = call_contract(
         contract_address=this_call.to,
@@ -487,22 +494,20 @@ func execute_list{syscall_ptr : felt*}(calls_len : felt, calls : Call*, response
         calldata_size=this_call.calldata_len,
         calldata=this_call.calldata,
     )
-    # copy the result in response
+
     memcpy(response, res.retdata, res.retdata_size)
-    # do the next calls recursively
-    let (response_len) = execute_list(calls_len - 1, calls + Call.SIZE, response + res.retdata_size)
+
+    let (response_len) = multicall(calls_len - 1, calls + Call.SIZE, response + res.retdata_size)
     return (response_len + res.retdata_size)
 end
 
 func from_call_array_to_call{syscall_ptr : felt*}(
     call_array_len : felt, call_array : CallArray*, calldata : felt*, calls : Call*
 ):
-    # if no more calls
     if call_array_len == 0:
         return ()
     end
 
-    # parse the current call
     assert [calls] = Call(
         to=[call_array].to,
         selector=[call_array].selector,
@@ -510,7 +515,6 @@ func from_call_array_to_call{syscall_ptr : felt*}(
         calldata=calldata + [call_array].data_offset
         )
 
-    # parse the remaining calls recursively
     from_call_array_to_call(
         call_array_len - 1, call_array + CallArray.SIZE, calldata, calls + Call.SIZE
     )
@@ -527,7 +531,9 @@ func from_felt_array_to_uint256_array{range_check_ptr}(
     let (calldata_) = felt_to_uint256([calldata])
     assert [calldata_uint256] = calldata_
 
-    from_felt_array_to_uint256_array(calldata_len - 1, calldata + 1, calldata_uint256 + 1)
+    from_felt_array_to_uint256_array(
+        calldata_len - 1, calldata + 1, calldata_uint256 + Uint256.SIZE
+    )
 
     return ()
 end

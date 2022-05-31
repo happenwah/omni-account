@@ -21,8 +21,8 @@ from contracts.interfaces.IERC20 import IERC20
 
 # Keccak("StarkNet Ecosystem")
 const STARKNET_ECOSYSTEM_HASH = 309689450920295678721545444397245125347984070251552327295375900229755709900
-
-const ONE_WEEK = 7 * 86400
+# One day
+const TIMELOCK_PERIOD = 86400
 
 const FALSE = 0
 const TRUE = 1
@@ -76,6 +76,16 @@ end
 # EXTERNAL METHODS
 ####################
 
+# @notice Allows caller to lock funds that can be withdrawn later on by providing a new eth signature.
+#         If timelock expires, anyone will be able to unlock funds to fallback_recipient address.
+# @param key Hash (digest) that identifies this deposit.
+# @param token Starknet address of ERC20 token to be deposited.
+# @param amount Amount of token to be locked.
+# @param default_eth_signer ETH address that has signed key.
+# @param fallback_recipient Account that will receive funds in case timelock expires.
+# @param eth_signature_r secp256k1 R coordinate.
+# @param eth_signature_s secp256k1 S coordinate.
+# @param eth_signature_v secp256k1 V coordinate.
 @external
 func lock_funds_for_key{
     syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, bitwise_ptr : BitwiseBuiltin*, range_check_ptr
@@ -142,7 +152,7 @@ func lock_funds_for_key{
         default_eth_signer=default_eth_signer,
         fallback_recipient=fallback_recipient,
         amount=deposit_amount,
-        timelock=block_timestamp + ONE_WEEK,
+        timelock=block_timestamp + TIMELOCK_PERIOD,
     )
     _omni_vault_deposit.write(key=key, value=_vault_deposit_value)
 
@@ -154,6 +164,12 @@ func lock_funds_for_key{
     return ()
 end
 
+# @notice Allows caller to claim locked funds from `key`, by providing a signature for keccak([key, STARKNET_ECOSYSTEM_HASH].
+#         In case timelock has expired, funds will instead go to `fallback_recipient`.
+# @param key Hash (digest) that identifies the deposit.
+# @param eth_signature_r secp256k1 R coordinate.
+# @param eth_signature_s secp256k1 S coordinate.
+# @param eth_signature_v secp256k1 V coordinate.
 @external
 func unlock_funds_for_key{
     syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, bitwise_ptr : BitwiseBuiltin*, range_check_ptr
