@@ -64,7 +64,7 @@ end
 
 ## Motivation
 
-StarkNet's account abstraction unlocks plenty of novel use cases that have been made impossible under Ethereum EOAs, or at least very difficult to adopt due to high friction due to most users not wanting to actively manage smart contract wallets. This is an attempt to allow said accounts to be safely controlled by external EOA keys while allowing counter-parties to securely send messages and funds on the owners behalf. The underlying signature exchange protocol is heavily inspired by Connext's. Moreover, one could make an OmniAccount upgradeable and provide an UI to the user that allows him/her to customize it with all kinds of standards, of which this design could be a building block primitive.
+StarkNet's account abstraction unlocks plenty of novel use cases that have been made impossible under Ethereum EOAs, or at least very difficult to adopt due to high friction due to most users not wanting to actively manage smart contract wallets. This is an attempt to allow said accounts to be safely controlled by external EOA keys while allowing counter-parties to securely send messages and funds on the owners behalf. The underlying signature exchange protocol is heavily inspired by Connext's NXTP. Moreover, one could make an OmniAccount upgradeable and provide an UI to the user that allows him/her to customize it with all kinds of standards, of which this design could be a building block primitive.
 
 ## Assumptions
 
