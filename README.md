@@ -6,7 +6,7 @@ Omni accounts are owned by at least two private keys:
 - STARK key, used to natively sign StarkNet transactions.
 - Ethereum key, which also belongs to the account owner and is typically used to sign transactions on EVM chains.
 
-While solely transacting on StarkNet, Omni accounts are no different than any conventional StarkNet account. 
+While solely transacting on StarkNet, Omni accounts are no different than any conventional StarkNet account: Interaction with other accounts is governed by STARK signatures.
 But in cases where the account owner wants to send messages and funds from any EVM chain to StarkNet, it exposes two useful external methods: 
 
 ```cairo
@@ -46,3 +46,9 @@ end
 ## Motivation
 
 StarkNet's account abstraction unlocks plenty of novel use cases that have been made impossible under Ethereum EOAs, or at least very difficult to adopt due to high friction due to most users not wanting to actively manage smart contract wallets. This is an attempt to allow said accounts to be safely controlled by external EOA keys while allowing counter-parties to securely send messages and funds on the owners behalf. The underlying signature exchange protocol is heavily inspired by Connext's. Moreover, one could make an OmniAccount upgradeable and provide an UI to the user that allows him/her to customize it with all kinds of standards, of which this design could be a building block primitive.
+
+## Assumptions
+
+In order for this standard to work, there are assumptions on the liveness of both the account's owner and counter-party. The protocol works as described above as long as both parties lock and claim their share of funds under a `TIMELOCK_PERIOD` (currently set to 24h, but can be customized). Once timelock expires and the parties haven't completed their due transactions, they can always withdraw their share of funds: account owner withdraws `token_amount` on origin EVM chain and counter-party unlocks `token_amount_minus_fee` from the vault by sending it to a pre-specified `fallback_recipient`. 
+
+While the modularily of this standard is attractive due to being a building block for accounts that allows two parties to permissionlessly exchange funds in a trust minimized manner, it would be more reliable and efficient for counter-parties to aggregate each other's bids in the origin EVM chain smart contract and allows users to choose. Any rogue counter-parties could be blacklisted by users, and risk losing their reputation over time. On the other hand, counter-parties with high uptime will earn more fees and earn on-chain reputation. This could be useful as a faster way to bridge funds from an EVM chain to StarkNet once two parties agree on the exchange, which could bypass the delay and caps of today's bridges.
