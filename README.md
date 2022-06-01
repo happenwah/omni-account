@@ -10,6 +10,16 @@ While solely transacting on StarkNet, Omni accounts are no different than any co
 But in cases where the account owner wants to send messages and funds from any EVM chain to StarkNet, it exposes two useful external methods: 
 
 ```cairo
+# @notice Allows caller to lock funds that can be withdrawn later on by providing a new eth signature.
+#         If timelock expires, anyone will be able to unlock funds to fallback_recipient address.
+# @param key Hash (digest) that identifies this deposit.
+# @param token Starknet address of ERC20 token to be deposited.
+# @param amount Amount of token to be locked.
+# @param default_eth_signer ETH address that has signed key.
+# @param fallback_recipient Account that will receive funds in case timelock expires.
+# @param eth_signature_r secp256k1 R coordinate.
+# @param eth_signature_s secp256k1 S coordinate.
+# @param eth_signature_v secp256k1 V coordinate.
 func deposit_funds_into_vault(
         origin_chain_id : felt,
         starknet_token : felt,
