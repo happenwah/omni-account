@@ -37,6 +37,15 @@ func deposit_funds_into_vault(
     ):
 end
 
+# @notice Allows anyone with the correct signature to claim StarkNetOmniVault funds to this account,
+#          while timelock is still active.
+# @param key_low Low bits of hash that represents deposit to be claimed
+# @param key_high High bits of hash that represents deposit to be claimed
+# @param eth_signature_r_low Low bits of secp256k1 R coordinate.
+# @param eth_signature_r_high High bits of secp256k1 R coordinate.
+# @param eth_signature_s_low Low bits of secp256k1 S coordinate.
+# @param eth_signature_s_high High bits of secp256k1 S coordinate.
+# @param eth_signature_v secp256k1 V coordinate.
 func claim_funds_from_vault(
     key_low : felt,
     key_high : felt,
