@@ -4,7 +4,7 @@ from starkware.cairo.common.cairo_builtins import HashBuiltin, BitwiseBuiltin
 from starkware.cairo.common.math_cmp import is_nn
 from starkware.cairo.common.alloc import alloc
 from starkware.cairo.common.uint256 import Uint256, uint256_add, uint256_neg, uint256_le
-from starkware.cairo.common.cairo_keccak.keccak import keccak_uint256s
+from starkware.cairo.common.cairo_keccak.keccak import keccak_uint256s, finalize_keccak
 from starkware.starknet.common.syscalls import (
     get_contract_address,
     get_caller_address,
@@ -203,8 +203,11 @@ func unlock_funds_for_key{
         # Verify eth signature
         with_attr error_message("Invalid eth signature"):
             let keccak_ptr : felt* = alloc()
+            local keccak_ptr_start : felt* = keccak_ptr
             with keccak_ptr:
                 let (digest) = keccak_uint256s(2 * Uint256.SIZE, hash_array)
+                finalize_keccak(keccak_ptr_start, keccak_ptr)
+
                 verify_eth_signature_uint256(
                     msg_hash=digest,
                     r=eth_signature_r,

@@ -2,7 +2,7 @@
 
 from starkware.cairo.common.cairo_builtins import HashBuiltin, SignatureBuiltin, BitwiseBuiltin
 from starkware.cairo.common.signature import verify_ecdsa_signature
-from starkware.cairo.common.cairo_keccak.keccak import keccak_uint256s
+from starkware.cairo.common.cairo_keccak.keccak import keccak_uint256s, finalize_keccak
 from starkware.cairo.common.cairo_secp.signature import verify_eth_signature_uint256
 from starkware.cairo.common.uint256 import Uint256
 from starkware.cairo.common.alloc import alloc
@@ -176,8 +176,10 @@ func deposit_funds_into_vault{
     let _eth_signature_s = Uint256(low=eth_signature_s_low, high=eth_signature_s_high)
     # Keccak(calldata)
     let (keccak_ptr : felt*) = alloc()
+    local keccak_ptr_start_calldata : felt* = keccak_ptr
     with keccak_ptr:
         let (calldata_hash) = keccak_uint256s(calldata_len, calldata_uint256)
+        finalize_keccak(keccak_ptr_start_calldata, keccak_ptr)
     end
 
     let (hash_array : Uint256*) = alloc()
@@ -188,8 +190,10 @@ func deposit_funds_into_vault{
     assert [hash_array + 4 * Uint256.SIZE] = _selector
     assert [hash_array + 5 * Uint256.SIZE] = calldata_hash
     # Compute digest
+    local keccak_ptr_start : felt* = keccak_ptr
     with keccak_ptr:
         let (digest) = keccak_uint256s(6 * Uint256.SIZE, hash_array)
+        finalize_keccak(keccak_ptr_start, keccak_ptr)
     end
     let (exec_call) = is_nn(to)
     if exec_call == TRUE:
