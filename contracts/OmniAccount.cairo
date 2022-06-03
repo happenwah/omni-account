@@ -286,6 +286,11 @@ func __execute__{
 ) -> (retdata_size : felt, retdata : felt*):
     alloc_locals
 
+    let (caller) = get_caller_address()
+    with_attr error_message("No reentrant call"):
+        assert caller = 0
+    end
+
     let (calls : Call*) = alloc()
     from_call_array_to_call(call_array_len, call_array, calldata, calls)
     let calls_len = call_array_len
